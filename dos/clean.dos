@@ -1,0 +1,25 @@
+login("admin","123456")
+
+for(i in 1..50) {
+	try {
+		unsubscribeTable(tableName="LongSTable"+string(i), actionName="SubLongSTable"+string(i))
+		unsubscribeTable(tableName="FloatSTable"+string(i), actionName="SubFloatSTable"+string(i))
+		unsubscribeTable(tableName="StringSTable"+string(i), actionName="SubStringSTable"+string(i))
+		
+		// drop stream table
+		dropStreamTable("LongSTable"+string(i))
+		dropStreamTable("FloatSTable"+string(i))
+		dropStreamTable("StringSTable"+string(i))
+	} catch (ex) {
+		
+	}
+	
+}
+
+for(i in 1..50) {
+	try {
+		dropDatabase("dfs://POC"+string(i))
+	} catch (ex) {
+		
+	}
+}

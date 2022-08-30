@@ -1,0 +1,66 @@
+login('admin','123456')
+
+//GOAL:50个工厂， 平均每个工厂100个设备，每个设备平均20个点位左右。写入10W ,查询 2W QPS
+//按照同一个设备同一个测点为1张表，总共会有：50*100*20=10W张表
+//数据量估算：
+// 一条记录按100个字节来估算，每个点位每秒1条数据，总的数据量为: 50*100*20*3600*24*100/1024/1024/1024=804G，每个工厂，1天为16G左右
+// 数据量为： 50*100*20*3600*24 = 8640000000, 每个工厂，1天为172800000
+// 对于每一条记录，  工厂+设备+点位+时间，能确立一条数据
+
+// 分区方案
+// 按天,按设备，设备30个哈希，1个工厂，每天涉及90个分区，平均每个分区182M
+
+// maxMemSize 16G
+// 每秒的数据量为 194.18KB,
+
+// 库表方案：
+// 50个工厂，50个库，每个库3张表，对应long, float, string三种类型的数据
+// 
+
+//下面针对一个工厂，来进行DFS，流表的建立，已经订阅和写入
+//数据写入时，统一先写到3张流表，之后再写入DFS
+//流表内存保留1天的数据，如果是查询当天数据，可以通过查询流表来加速
+
+
+def createDB(dbName) {
+	longSchema = table(1:0, `measurement`time`coefficient`coefficientext`decimalplaces`deviceId`displayname`displaytype`id`label`originvalue`type`typename`value,[SYMBOL,NANOTIMESTAMP,FLOAT,FLOAT,INT,SYMBOL,STRING,STRING,LONG,STRING,LONG,SYMBOL,SYMBOL,LONG])
+	floatSchema = table(1:0, `measurement`time`coefficient`coefficientext`decimalplaces`deviceId`displayname`displaytype`id`label`originvalue`type`typename`value,[SYMBOL,NANOTIMESTAMP,FLOAT,FLOAT,INT,SYMBOL,STRING,STRING,LONG,STRING,FLOAT,SYMBOL,SYMBOL,FLOAT])
+	stringSchema = table(1:0, `measurement`time`coefficient`coefficientext`decimalplaces`deviceId`displayname`displaytype`id`label`originvalue`type`typename`value, [SYMBOL, NANOTIMESTAMP,FLOAT,FLOAT,INT,SYMBOL,STRING,STRING,LONG,STRING,FLOAT,SYMBOL,SYMBOL,STRING])
+	db1 = database(, VALUE, 2022.01.01..2022.12.31)
+	db2 = database(, HASH, [SYMBOL, 30] )
+	db = database("dfs://"+dbName,COMPO,[db1,db2],engine="TSDB")
+	// 一个工厂，measurement为20，deviceId为100，总共2000，
+   	 longDfsTable = db.createPartitionedTable(table=longSchema,tableName="LongTable",partitionColumns=`time`deviceId,sortColumns=`deviceId`measurement`time,sortKeyMappingFunction=[hashBucket{,8}, hashBucket{,10}], keepDuplicates=LAST)
+	 floatDfsTable = db.createPartitionedTable(table=floatSchema,tableName="FloatTable",partitionColumns=`time`deviceId,sortColumns=`deviceId`measurement`time,sortKeyMappingFunction=[hashBucket{,8}, hashBucket{,10}], keepDuplicates=LAST)
+	 stringDfsTable = db.createPartitionedTable(table=stringSchema,tableName="StringTable",partitionColumns=`time`deviceId,sortColumns=`deviceId`measurement`time,sortKeyMappingFunction=[hashBucket{,8}, hashBucket{,10}], keepDuplicates=LAST)
+}
+
+def createStreamTable(index) {
+	longSchema = table(1:0, `measurement`time`coefficient`coefficientext`decimalplaces`deviceId`displayname`displaytype`id`label`originvalue`type`typename`value,[SYMBOL,NANOTIMESTAMP,FLOAT,FLOAT,INT,SYMBOL,STRING,STRING,LONG,STRING,LONG,SYMBOL,SYMBOL,LONG])
+	floatSchema = table(1:0, `measurement`time`coefficient`coefficientext`decimalplaces`deviceId`displayname`displaytype`id`label`originvalue`type`typename`value,[SYMBOL,NANOTIMESTAMP,FLOAT,FLOAT,INT,SYMBOL,STRING,STRING,LONG,STRING,FLOAT,SYMBOL,SYMBOL,FLOAT])
+	stringSchema = table(1:0, `measurement`time`coefficient`coefficientext`decimalplaces`deviceId`displayname`displaytype`id`label`originvalue`type`typename`value, [SYMBOL, NANOTIMESTAMP,FLOAT,FLOAT,INT,SYMBOL,STRING,STRING,LONG,STRING,FLOAT,SYMBOL,SYMBOL,STRING])
+
+
+	longSTName = "LongSTable"+string(index)
+	FloatSTName = "FloatSTable"+string(index)
+	StringSTName = "StringSTable"+string(index)
+	haStreamTable(2, longSchema, longSTName, 172800000)
+	haStreamTable(2, floatSchema, FloatSTName, 172800000)
+	haStreamTable(2, stringSchema, StringSTName, 172800000)
+
+	dbPath = "dfs://POC"+string(index)
+
+	//订阅流表，1个工厂，每秒100*20=2000条的数据写入
+	subscribeTable(tableName=longSTName, actionName="Sub"+longSTName, offset =-1, handler=loadTable(dbPath,"LongTable"), msgAsTable = true, batchSize=2000, throttle=1, hash=1, reconnect=true)
+	subscribeTable(tableName=FloatSTName, actionName="Sub"+FloatSTName, offset =-1, handler=loadTable(dbPath,"FloatTable"), msgAsTable = true, batchSize=2000, throttle=1, hash=1, reconnect=true)
+	subscribeTable(tableName=StringSTName, actionName="Sub"+StringSTName, offset =-1, handler=loadTable(dbPath,"StringTable"), msgAsTable = true, batchSize=2000, throttle=1, hash=1, reconnect=true)
+}
+
+//每个工厂3个表，一个工厂一个库
+for(i in 1..50) {
+	createDB("POC"+string(i))
+}
+//创建150张流表，每个工厂3张流表，对应最终150个表（50个工厂）
+for(i in 1..50) {
+	createStreamTable(i) 
+}

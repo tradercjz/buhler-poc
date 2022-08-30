@@ -1,0 +1,21 @@
+login("admin","123456")
+
+def checkWrite() {
+    for(i in 1..50) {
+	    // 获取DFS数据量
+		dbName = "POC"+string(i)
+		longCnt = exec count(*) from loadTable("dfs://"+dbName, "LongTable")
+		floatCnt = exec count(*) from loadTable("dfs://"+dbName, "FloatTable")
+		stringCnt = exec count(*) from loadTable("dfs://"+dbName, "StringTable")
+
+		// 获取流表数据
+		longSTCnt = exec count(*) from objByName("LongSTable"+string(i))
+		floatSTCnt = exec count(*) from objByName("FloatSTable"+string(i))
+		stringSTCnt = exec count(*) from objByName("StringSTable"+string(i))
+
+		// 确认流表数据和DFS数据量一致
+		assert(longCnt[0] == longSTCnt[0])
+		assert(floatCnt[0] == floatSTCnt[0])
+		assert(stringCnt[0] == stringSTCnt[0])
+    }
+}
